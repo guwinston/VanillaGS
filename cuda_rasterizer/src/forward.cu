@@ -11,6 +11,7 @@
 
 #include "forward.h"
 #include "auxiliary.h"
+#include "config.h"
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 namespace cg = cooperative_groups;
@@ -278,7 +279,12 @@ renderCUDA(
 	float* __restrict__ final_T,
 	uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ bg_color,
-	uint8_t* __restrict__ out_color)
+#if USE_UINT8_COLOR
+	uint8_t* __restrict__ out_color
+#else
+	float* __restrict__ out_color
+#endif
+)
 {
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();
@@ -378,7 +384,11 @@ renderCUDA(
 		n_contrib[pix_id] = last_contributor;
 		for (int ch = 0; ch < CHANNELS; ch++)
 			// out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
+#if USE_UINT8_COLOR
 			out_color[ch * H * W + pix_id] = (uint8_t)min(max(0.0f, (C[ch] + T * bg_color[ch]) * 255.0f), 255.0f);
+#else
+			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
+#endif
 	}
 }
 
@@ -393,9 +403,14 @@ void FORWARD::render(
 	float* final_T,
 	uint32_t* n_contrib,
 	const float* bg_color,
-	uint8_t* out_color)
+#if USE_UINT8_COLOR
+	uint8_t* out_color
+#else
+	float* out_color
+#endif
+)
 {
-	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
+	renderCUDA<NUM_IMAGE_CHANNELS> << <grid, block >> > (
 		ranges,
 		point_list,
 		W, H,
@@ -434,7 +449,7 @@ void FORWARD::preprocess(int P, int D, int M,
 	uint32_t* tiles_touched,
 	bool prefiltered)
 {
-	preprocessCUDA<NUM_CHANNELS> << <(P + 255) / 256, 256 >> > (
+	preprocessCUDA<NUM_IMAGE_CHANNELS> << <(P + 255) / 256, 256 >> > (
 		P, D, M,
 		means3D,
 		scales,

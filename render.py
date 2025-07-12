@@ -12,6 +12,21 @@ from PIL import Image
 import time
 from vanilla_gaussian_splatting import rasterize_gaussians, mark_visible
 
+from pynvml import *
+from contextlib import contextmanager
+
+@contextmanager
+def measure_gpu_memory(tag=""):
+    nvmlInit()
+    handle = nvmlDeviceGetHandleByIndex(0)
+    info_before = nvmlDeviceGetMemoryInfo(handle).used
+    yield
+    info_after = nvmlDeviceGetMemoryInfo(handle).used
+    nvmlShutdown()
+    diff = (info_after - info_before) / 1024 / 1024
+    print(f"[{tag}] GPU memory delta: {diff:.2f} MB")
+
+
 
 class Camera:
     def __init__(self, camera_json, device):
@@ -200,23 +215,25 @@ def render_scene(gaussian_path, camera_path, save_path=None, sh_degree=3, test_i
         cameras_json = [cameras_json[test_idx]]
 
     times = []
+    test_count = 1
     progress_bar = tqdm(cameras_json)
     for i,camera_json in enumerate(progress_bar):
         camera = Camera(camera_json, device)
 
         torch.cuda.synchronize()
         t0 = time.time()
-        num_rendered, image = rasterizer.forward(camera, bg_color)
+        for _ in range(test_count):
+            num_rendered, image = rasterizer.forward(camera, bg_color)
         torch.cuda.synchronize()
         t1 = time.time()
 
-        times.append((t1-t0)*1000)
+        times.append((t1-t0)*1000 / test_count)
         progress_bar.set_description(f"FPS = {1/(t1-t0) :2f}, time = {(t1-t0)*1000:.2f} ms, num_rendered = {num_rendered}")
 
         if save_path is not None:
             image_path = os.path.join(save_path, "%s.jpg" % camera.img_name.split('/')[-1])
             image = image.permute(1,2,0).cpu().numpy()
-            # image = (image*255).astype(np.uint8)
+            image = (image*255).astype(np.uint8)
             Image.fromarray(image).save(image_path.replace('.ppm', '.jpg'))
     print(f"Mean time cost = {np.mean(times):.2f} ms, Max time cost = {np.max(times):.2f} ms")
     plt.plot(times, label="Render time of VanillaGS")
@@ -230,8 +247,8 @@ def render_scene(gaussian_path, camera_path, save_path=None, sh_degree=3, test_i
 if __name__ == "__main__":
     scenes = {
         "garden": {
-            "gaussian_path": r"Z:/home/gwc/code/SuGaR/output/vanilla_gs/garden/point_cloud/iteration_7000/point_cloud.ply",
-            "camera_path": r"Z:/home/gwc/code/SuGaR/output/vanilla_gs/garden/cameras.json",
+            "gaussian_path": r"/mnt/e/Dataset/GaussianSplattingModels/garden/point_cloud/iteration_30000/point_cloud.ply",
+            "camera_path": r"/mnt/e/Dataset/GaussianSplattingModels/garden/cameras.json",
             "save_path": r"output/garden/vanilla"
         },
         "mc_aerial_c36": {
@@ -260,4 +277,5 @@ if __name__ == "__main__":
     gaussian_path = scenes[scene]["gaussian_path"]
     camera_path = scenes[scene]["camera_path"]
     save_path = scenes[scene]["save_path"]
-    render_scene(gaussian_path, camera_path, save_path=None, sh_degree=3, test_idx=None)
+    with measure_gpu_memory("vanilla rendering"):
+        render_scene(gaussian_path, camera_path, save_path=None, sh_degree=3, test_idx=None)

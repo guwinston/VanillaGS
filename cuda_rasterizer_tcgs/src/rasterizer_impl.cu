@@ -26,9 +26,10 @@
 #include <cooperative_groups/reduce.h>
 namespace cg = cooperative_groups;
 
+#include "config.h"
 #include "auxiliary.h"
 #include "forward.h"
-#include "config.h"
+#include "tcgs.h"
 
 // #define DEBUG
 // #define ENABLE_TIMING
@@ -416,8 +417,26 @@ int CudaRasterizer::Rasterizer::forward(
 #ifdef ENABLE_TIMING
 	cudaEventRecord(eRender, stream);
 #endif
+
 	// Let each tile blend its range of Gaussians independently in parallel
 	const float* feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
+#if USE_TCGS
+	// std::cout << "[CudaRasterizer::Rasterizer::forward] Using TCGS for rendering.\n";
+	CHECK_CUDA(TCGS::renderCUDA_Forward(
+		tile_grid, block,
+		imgState.ranges,
+		binningState.point_list,
+		width, height, P,
+		geomState.means2D,
+		feature_ptr,
+		geomState.conic_opacity,
+		imgState.accum_alpha,
+		imgState.n_contrib,
+		background,
+		out_color,
+		geomState.depths,
+		nullptr), debug)
+#else
 	CHECK_CUDA(FORWARD::render(
 		tile_grid, block,
 		imgState.ranges,
@@ -430,6 +449,7 @@ int CudaRasterizer::Rasterizer::forward(
 		imgState.n_contrib,
 		background,
 		out_color), debug)
+#endif
 
 #ifdef ENABLE_TIMING
 	cudaEventRecord(eEnd, stream);
